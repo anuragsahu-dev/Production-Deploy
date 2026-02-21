@@ -1,0 +1,56 @@
+// Grafana Alloy config — replaces deprecated Promtail
+// Alloy uses "River" syntax (not YAML)
+
+// ─── Scrape Docker container logs ───
+local.file_match "docker_logs" {
+  path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log"}]
+}
+
+loki.source.file "docker" {
+  targets    = local.file_match.docker_logs.targets
+  forward_to = [loki.process.docker.receiver]
+}
+
+// ─── Parse Docker JSON log format ───
+loki.process "docker" {
+  // Parse Docker's JSON wrapper
+  stage.docker {}
+
+  // If the log line itself is JSON (Winston), extract fields
+  stage.json {
+    expressions = {
+      level   = "level",
+      service = "service",
+    }
+  }
+
+  // Promote extracted fields to Loki labels
+  stage.labels {
+    values = {
+      level   = "",
+      service = "",
+    }
+  }
+
+  // Add static labels
+  stage.static_labels {
+    values = {
+      job  = "docker",
+      host = "my-api-server",
+    }
+  }
+
+  forward_to = [loki.write.grafana_cloud.receiver]
+}
+
+// ─── Ship to Grafana Cloud Loki ───
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("LOKI_URL")
+
+    basic_auth {
+      username = env("LOKI_USERNAME")
+      password = env("LOKI_API_KEY")
+    }
+  }
+}

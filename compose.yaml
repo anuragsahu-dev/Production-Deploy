@@ -1,0 +1,109 @@
+services:
+  # ─────────────────────────────────────────────
+  # Node.js API
+  # ─────────────────────────────────────────────
+  app:
+    image: YOUR_DOCKERHUB_USERNAME/api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://localhost:3000/health'').then(r => { if (!r.ok) throw new Error(); })"',
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Redis — Caching + Rate Limiting
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Nginx — Reverse Proxy (SSL + Rate Limiting)
+  # ─────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Certbot — SSL Certificate Manager
+  # ─────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+
+  # ─────────────────────────────────────────────
+  # Grafana Alloy — Log Shipper → Grafana Cloud Loki
+  # (replaces deprecated Promtail, EOL: March 2, 2026)
+  # ─────────────────────────────────────────────
+  alloy:
+    image: grafana/alloy:v1.8.3
+    container_name: alloy
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+    environment:
+      - LOKI_URL=${LOKI_URL}
+      - LOKI_USERNAME=${LOKI_USERNAME}
+      - LOKI_API_KEY=${LOKI_API_KEY}
+    command:
+      - run
+      - /etc/alloy/config.alloy
+    depends_on:
+      - app
+    networks:
+      - app-network
+
+volumes:
+  redis-data:
+
+networks:
+  app-network:
+    driver: bridge

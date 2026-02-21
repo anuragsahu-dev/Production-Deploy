@@ -1,0 +1,150 @@
+name: Deploy
+
+on:
+  workflow_dispatch: # Manual trigger only
+
+env:
+  IMAGE_NAME: YOUR_DOCKERHUB_USERNAME/api
+  DEPLOY_TIMEOUT: 120
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ─── Show what we're deploying ───
+      - name: Get deployment info
+        id: deploy_info
+        run: |
+          IMAGE_TAG=$(grep -oP 'image: .*:\K[^\s]+' compose.yaml || echo "latest")
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "### 🚀 Deployment Info" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${{ env.IMAGE_NAME }}:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+      # ─── SSH into EC2 and deploy ───
+      - name: Deploy to EC2
+        id: deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            set -e
+
+            echo "=============================================="
+            echo "Starting deployment..."
+            echo "=============================================="
+
+            # ─── Clone or update repository ───
+            if [ ! -d ~/app/.git ]; then
+              echo "First deployment — cloning repository..."
+              rm -rf ~/app
+              git clone https://github.com/${{ github.repository }}.git ~/app
+            fi
+
+            cd ~/app
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            # ─── Get image tag from compose.yaml ───
+            IMAGE_TAG=$(grep -oP 'image: .*:\K[^\s]+' compose.yaml || echo "latest")
+            echo "Deploying image: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+
+            # ─── Pull the Docker image ───
+            echo "Pulling Docker image..."
+            if ! docker pull ${{ env.IMAGE_NAME }}:$IMAGE_TAG; then
+              echo "ERROR: Failed to pull image"
+              exit 1
+            fi
+            echo "Image pulled successfully"
+
+            # ─── Deploy with Docker Compose ───
+            echo "Starting containers..."
+            docker compose up -d
+
+            # ─── Health Check ───
+            echo "=============================================="
+            echo "Health Check (timeout: ${{ env.DEPLOY_TIMEOUT }}s)"
+            echo "=============================================="
+
+            START_TIME=$(date +%s)
+
+            while true; do
+              CURRENT_TIME=$(date +%s)
+              ELAPSED=$((CURRENT_TIME - START_TIME))
+
+              if [ $ELAPSED -ge ${{ env.DEPLOY_TIMEOUT }} ]; then
+                echo ""
+                echo "TIMEOUT: App did not become healthy within ${{ env.DEPLOY_TIMEOUT }}s"
+                echo ""
+                echo "=============================================="
+                echo "CONTAINER STATUS"
+                echo "=============================================="
+                docker compose ps
+                echo ""
+                echo "=============================================="
+                echo "APP LOGS (last 50 lines)"
+                echo "=============================================="
+                docker compose logs --tail 50 app 2>&1 || echo "No logs available"
+                exit 1
+              fi
+
+              # Check if app container is healthy
+              HEALTH=$(docker inspect --format='{{.State.Health.Status}}' api 2>/dev/null || echo "not_found")
+
+              if [ "$HEALTH" == "healthy" ]; then
+                echo ""
+                echo "=============================================="
+                echo "✅ DEPLOYMENT SUCCESSFUL"
+                echo "=============================================="
+                echo "Image: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+                echo "Time: ${ELAPSED}s"
+                echo ""
+                docker compose ps
+                break
+              fi
+
+              echo "[${ELAPSED}s] Waiting... container health: $HEALTH"
+              sleep 5
+            done
+
+            # ─── Cleanup ───
+            echo ""
+            echo "Cleaning up old images..."
+            docker image prune -f 2>/dev/null || true
+
+            echo ""
+            echo "=============================================="
+            echo "Deployment completed!"
+            echo "=============================================="
+
+      # ─── Update GitHub summary ───
+      - name: Deployment summary
+        if: always()
+        run: |
+          if [ "${{ steps.deploy.outcome }}" == "success" ]; then
+            echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The application has been deployed and is healthy." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Troubleshooting:**" >> $GITHUB_STEP_SUMMARY
+            echo "1. SSH to EC2: \`ssh -i key.pem ubuntu@<IP>\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Check logs: \`docker compose logs app\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. Check containers: \`docker compose ps\`" >> $GITHUB_STEP_SUMMARY
+            echo "4. Verify .env exists: \`ls -la ~/app/.env\`" >> $GITHUB_STEP_SUMMARY
+          fi

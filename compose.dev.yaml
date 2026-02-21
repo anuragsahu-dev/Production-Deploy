@@ -1,0 +1,42 @@
+services:
+  # ─────────────────────────────────────────────
+  # Node.js API (Development — hot reload)
+  # ─────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: api-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app # Sync source code (live reload)
+      - /app/node_modules # Keep container's node_modules intact
+    env_file: .env
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Redis
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    ports:
+      - "6379:6379" # Exposed for local debugging (Redis CLI, RedisInsight, etc.)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
