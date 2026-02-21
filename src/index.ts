@@ -17,7 +17,7 @@ app.use(express.json({ limit: "10kb" })); // Prevent large payload attacks
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
-app.get("/health", async (_req, res) => {
+app.get("/health", (_req, res) => {
   const redisStatus = redis.status === "ready" ? "connected" : redis.status;
 
   res.status(200).json({
@@ -35,13 +35,19 @@ const server = app.listen(env.PORT, () => {
   logger.info(`Server running on http://localhost:${env.PORT} [${env.NODE_ENV}]`);
 });
 
-const shutdown = async (signal: string) => {
+const shutdown = (signal: string) => {
   logger.info(`${signal} received. Shutting down gracefully...`);
 
-  server.close(async () => {
-    await redis.quit(); // Close Redis connection
-    logger.info("Server closed.");
-    process.exit(0);
+  server.close(() => {
+    redis
+      .quit()
+      .then(() => {
+        logger.info("Server closed.");
+        process.exit(0);
+      })
+      .catch(() => {
+        process.exit(1);
+      });
   });
 
   // Force exit after 10s if connections don't close
