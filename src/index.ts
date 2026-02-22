@@ -57,5 +57,7 @@ const shutdown = (signal: string) => {
   }, 10_000);
 };
 
+console.log("Hello");
+
 process.on("SIGTERM", () => shutdown("SIGTERM")); // Docker sends this
 process.on("SIGINT", () => shutdown("SIGINT")); // Ctrl+C sends this
