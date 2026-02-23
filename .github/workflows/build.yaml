@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger only
 
 env:
-  IMAGE_NAME: YOUR_DOCKERHUB_USERNAME/api
+  IMAGE_NAME: as3305100/api
 
 jobs:
   build-and-push:

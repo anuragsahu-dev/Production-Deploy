@@ -1,10 +1,10 @@
 // ============================================
 // Grafana Alloy Configuration
-// Ships: Logs → Loki, Metrics → Mimir
+// Ships: Docker Logs → Grafana Cloud Loki
 // ============================================
 
 // ══════════════════════════════════════════════
-// PART 1: LOGS → Grafana Cloud Loki
+// LOGS → Grafana Cloud Loki
 // ══════════════════════════════════════════════
 
 // ─── Discover Docker container log files ───
@@ -57,52 +57,6 @@ loki.write "grafana_cloud" {
     basic_auth {
       username = env("LOKI_USERNAME")
       password = env("LOKI_API_KEY")
-    }
-  }
-}
-
-// ══════════════════════════════════════════════
-// PART 2: METRICS → Grafana Cloud Mimir
-// Server health: CPU, RAM, disk, network
-// ══════════════════════════════════════════════
-
-// ─── Collect host metrics (CPU, RAM, disk, network) ───
-// These run inside the Alloy container but read host stats
-// via mounted /proc and /sys (see compose.yaml volumes)
-
-prometheus.exporter.unix "host" {
-  // Uses /proc and /sys mounted from the host
-  procfs_path = "/host/proc"
-  sysfs_path  = "/host/sys"
-  rootfs_path = "/host/root"
-
-  // Only collect what we need (keeps it lightweight)
-  set_collectors = [
-    "cpu",         // CPU usage per core
-    "meminfo",     // RAM usage
-    "filesystem",  // Disk usage
-    "netdev",      // Network traffic (bytes in/out)
-    "loadavg",     // System load average
-    "diskstats",   // Disk I/O
-  ]
-}
-
-// ─── Scrape the metrics every 60 seconds ───
-prometheus.scrape "host_metrics" {
-  targets    = prometheus.exporter.unix.host.targets
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-
-  scrape_interval = "60s"  // Every 60s is enough for a single server
-}
-
-// ─── Ship metrics to Grafana Cloud Mimir ───
-prometheus.remote_write "grafana_cloud" {
-  endpoint {
-    url = env("MIMIR_URL")
-
-    basic_auth {
-      username = env("MIMIR_USERNAME")
-      password = env("MIMIR_API_KEY")
     }
   }
 }

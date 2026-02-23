@@ -79,8 +79,9 @@ services:
       - ./certbot/www:/var/www/certbot
 
   # ─────────────────────────────────────────────
-  # Grafana Alloy — Logs → Loki, Metrics → Mimir
+  # Grafana Alloy — Logs → Loki
   # (replaces deprecated Promtail, EOL: March 2, 2026)
+  # Metrics handled by AWS CloudWatch (built into EC2)
   # ─────────────────────────────────────────────
   alloy:
     image: grafana/alloy:v1.8.3
@@ -89,18 +90,10 @@ services:
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro # Docker logs
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro # Config
-      - /proc:/host/proc:ro # Host CPU/RAM metrics
-      - /sys:/host/sys:ro # Host system metrics
-      - /:/host/root:ro # Host disk metrics
     environment:
-      # Loki (logs)
       - LOKI_URL=${LOKI_URL}
       - LOKI_USERNAME=${LOKI_USERNAME}
       - LOKI_API_KEY=${LOKI_API_KEY}
-      # Mimir (metrics)
-      - MIMIR_URL=${MIMIR_URL}
-      - MIMIR_USERNAME=${MIMIR_USERNAME}
-      - MIMIR_API_KEY=${MIMIR_API_KEY}
     command:
       - run
       - /etc/alloy/config.alloy
