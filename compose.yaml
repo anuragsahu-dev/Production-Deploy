@@ -79,7 +79,7 @@ services:
       - ./certbot/www:/var/www/certbot
 
   # ─────────────────────────────────────────────
-  # Grafana Alloy — Log Shipper → Grafana Cloud Loki
+  # Grafana Alloy — Logs → Loki, Metrics → Mimir
   # (replaces deprecated Promtail, EOL: March 2, 2026)
   # ─────────────────────────────────────────────
   alloy:
@@ -87,12 +87,20 @@ services:
     container_name: alloy
     restart: unless-stopped
     volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro # Docker logs
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro # Config
+      - /proc:/host/proc:ro # Host CPU/RAM metrics
+      - /sys:/host/sys:ro # Host system metrics
+      - /:/host/root:ro # Host disk metrics
     environment:
+      # Loki (logs)
       - LOKI_URL=${LOKI_URL}
       - LOKI_USERNAME=${LOKI_USERNAME}
       - LOKI_API_KEY=${LOKI_API_KEY}
+      # Mimir (metrics)
+      - MIMIR_URL=${MIMIR_URL}
+      - MIMIR_USERNAME=${MIMIR_USERNAME}
+      - MIMIR_API_KEY=${MIMIR_API_KEY}
     command:
       - run
       - /etc/alloy/config.alloy

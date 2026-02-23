@@ -1,7 +1,13 @@
-// Grafana Alloy config — replaces deprecated Promtail
-// Alloy uses "River" syntax (not YAML)
+// ============================================
+// Grafana Alloy Configuration
+// Ships: Logs → Loki, Metrics → Mimir
+// ============================================
 
-// ─── Scrape Docker container logs ───
+// ══════════════════════════════════════════════
+// PART 1: LOGS → Grafana Cloud Loki
+// ══════════════════════════════════════════════
+
+// ─── Discover Docker container log files ───
 local.file_match "docker_logs" {
   path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log"}]
 }
@@ -11,12 +17,12 @@ loki.source.file "docker" {
   forward_to = [loki.process.docker.receiver]
 }
 
-// ─── Parse Docker JSON log format ───
+// ─── Parse Docker + Winston JSON logs ───
 loki.process "docker" {
-  // Parse Docker's JSON wrapper
+  // Parse Docker's JSON wrapper (extracts log line, timestamp, stream)
   stage.docker {}
 
-  // If the log line itself is JSON (Winston), extract fields
+  // If the log line is JSON (Winston), extract useful fields
   stage.json {
     expressions = {
       level   = "level",
@@ -24,7 +30,7 @@ loki.process "docker" {
     }
   }
 
-  // Promote extracted fields to Loki labels
+  // Promote extracted fields to Loki labels (for filtering)
   stage.labels {
     values = {
       level   = "",
@@ -32,7 +38,7 @@ loki.process "docker" {
     }
   }
 
-  // Add static labels
+  // Add static labels to identify the source
   stage.static_labels {
     values = {
       job  = "docker",
@@ -43,7 +49,7 @@ loki.process "docker" {
   forward_to = [loki.write.grafana_cloud.receiver]
 }
 
-// ─── Ship to Grafana Cloud Loki ───
+// ─── Ship logs to Grafana Cloud Loki ───
 loki.write "grafana_cloud" {
   endpoint {
     url = env("LOKI_URL")
@@ -51,6 +57,52 @@ loki.write "grafana_cloud" {
     basic_auth {
       username = env("LOKI_USERNAME")
       password = env("LOKI_API_KEY")
+    }
+  }
+}
+
+// ══════════════════════════════════════════════
+// PART 2: METRICS → Grafana Cloud Mimir
+// Server health: CPU, RAM, disk, network
+// ══════════════════════════════════════════════
+
+// ─── Collect host metrics (CPU, RAM, disk, network) ───
+// These run inside the Alloy container but read host stats
+// via mounted /proc and /sys (see compose.yaml volumes)
+
+prometheus.exporter.unix "host" {
+  // Uses /proc and /sys mounted from the host
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  // Only collect what we need (keeps it lightweight)
+  set_collectors = [
+    "cpu",         // CPU usage per core
+    "meminfo",     // RAM usage
+    "filesystem",  // Disk usage
+    "netdev",      // Network traffic (bytes in/out)
+    "loadavg",     // System load average
+    "diskstats",   // Disk I/O
+  ]
+}
+
+// ─── Scrape the metrics every 60 seconds ───
+prometheus.scrape "host_metrics" {
+  targets    = prometheus.exporter.unix.host.targets
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  scrape_interval = "60s"  // Every 60s is enough for a single server
+}
+
+// ─── Ship metrics to Grafana Cloud Mimir ───
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("MIMIR_URL")
+
+    basic_auth {
+      username = env("MIMIR_USERNAME")
+      password = env("MIMIR_API_KEY")
     }
   }
 }
