@@ -1,6 +1,6 @@
 services:
   app:
-    image: as3305100/api:latest
+    image: as3305100/api:build-6c14011a548e4470fb9ba110f5bc456a9f6d3edd
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,17 +14,14 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          'node -e "fetch(''http://localhost:3000/health'').then(r => { if (!r.ok) throw new Error(); })"',
-        ]
+        - CMD-SHELL
+        - node -e "fetch('http://localhost:3000/health').then(r => { if (!r.ok) throw new Error(); })"
       interval: 30s
       timeout: 5s
       start_period: 10s
       retries: 3
     networks:
       - app-network
-
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -32,19 +29,21 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD
+        - redis-cli
+        - ping
       interval: 10s
       timeout: 3s
       retries: 5
     networks:
       - app-network
-
   nginx:
     image: nginx:stable-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - '80:80'
+      - '443:443'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -55,24 +54,17 @@ services:
         condition: service_healthy
     networks:
       - app-network
-
   certbot:
     image: certbot/certbot
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
-
-  # ─────────────────────────────────────────────
-  # Grafana Alloy — Logs → Loki
-  # (replaces deprecated Promtail, EOL: March 2, 2026)
-  # Metrics handled by AWS CloudWatch (built into EC2)
-  # ─────────────────────────────────────────────
   alloy:
     image: grafana/alloy:v1.8.3
     restart: unless-stopped
     volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro # Docker logs
-      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro # Config
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
     environment:
       - LOKI_URL=${LOKI_URL}
       - LOKI_USERNAME=${LOKI_USERNAME}
@@ -84,10 +76,8 @@ services:
       - app
     networks:
       - app-network
-
 volumes:
-  redis-data:
-
+  redis-data: null
 networks:
   app-network:
     driver: bridge
