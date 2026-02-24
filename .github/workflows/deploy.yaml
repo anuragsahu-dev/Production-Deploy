@@ -59,7 +59,7 @@ jobs:
             git reset --hard origin/main
 
             # ─── Get image tag from compose.yaml ───
-            IMAGE_TAG=$(grep -oP 'image: as3305100/api:\K[^\s]+' compose.yaml || echo "latest")
+            IMAGE_TAG=$(grep -oP 'image: .*:\K[^\s]+' compose.yaml || echo "latest")
             echo "Deploying image: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
 
             # ─── Pull the Docker image ───
