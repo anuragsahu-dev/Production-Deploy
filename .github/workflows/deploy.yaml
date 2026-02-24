@@ -49,8 +49,12 @@ jobs:
             # ─── Clone or update repository ───
             if [ ! -d ~/app/.git ]; then
               echo "First deployment — cloning repository..."
+              # Backup .env if it exists (so we don't lose secrets)
+              [ -f ~/app/.env ] && cp ~/app/.env /tmp/.env.backup
               rm -rf ~/app
               git clone https://github.com/${{ github.repository }}.git ~/app
+              # Restore .env after clone
+              [ -f /tmp/.env.backup ] && mv /tmp/.env.backup ~/app/.env
             fi
 
             cd ~/app
