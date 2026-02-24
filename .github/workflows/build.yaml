@@ -62,10 +62,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build \
-            -t ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} \
-            --platform linux/amd64 \
-            .
+          docker build -t ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} --platform linux/amd64 .
 
       - name: Tag as latest
         run: docker tag ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} ${{ env.IMAGE_NAME }}:latest

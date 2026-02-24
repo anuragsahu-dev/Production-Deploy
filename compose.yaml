@@ -1,13 +1,9 @@
 services:
-  # ─────────────────────────────────────────────
-  # Node.js API
-  # ─────────────────────────────────────────────
   app:
-    image: YOUR_DOCKERHUB_USERNAME/api:latest
+    image: as3305100/api:latest
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: api
     restart: unless-stopped
     env_file: .env
     environment:
@@ -29,12 +25,8 @@ services:
     networks:
       - app-network
 
-  # ─────────────────────────────────────────────
-  # Redis — Caching + Rate Limiting
-  # ─────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: redis
     restart: unless-stopped
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
@@ -47,12 +39,8 @@ services:
     networks:
       - app-network
 
-  # ─────────────────────────────────────────────
-  # Nginx — Reverse Proxy (SSL + Rate Limiting)
-  # ─────────────────────────────────────────────
   nginx:
-    image: nginx:alpine
-    container_name: nginx
+    image: nginx:stable-alpine
     restart: unless-stopped
     ports:
       - "80:80"
@@ -68,12 +56,8 @@ services:
     networks:
       - app-network
 
-  # ─────────────────────────────────────────────
-  # Certbot — SSL Certificate Manager
-  # ─────────────────────────────────────────────
   certbot:
     image: certbot/certbot
-    container_name: certbot
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
@@ -85,7 +69,6 @@ services:
   # ─────────────────────────────────────────────
   alloy:
     image: grafana/alloy:v1.8.3
-    container_name: alloy
     restart: unless-stopped
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro # Docker logs

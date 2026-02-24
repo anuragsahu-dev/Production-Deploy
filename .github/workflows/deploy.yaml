@@ -101,7 +101,7 @@ jobs:
               fi
 
               # Check if app container is healthy
-              HEALTH=$(docker inspect --format='{{.State.Health.Status}}' api 2>/dev/null || echo "not_found")
+              HEALTH=$(docker compose ps app --format '{{.Health}}' 2>/dev/null || echo "not_found")
 
               if [ "$HEALTH" == "healthy" ]; then
                 echo ""
