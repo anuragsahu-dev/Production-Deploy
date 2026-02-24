@@ -21,7 +21,7 @@ jobs:
       - name: Get deployment info
         id: deploy_info
         run: |
-          IMAGE_TAG=$(grep -oP 'image: .*:\K[^\s]+' compose.yaml || echo "latest")
+          IMAGE_TAG=$(grep -oP 'image: ${{ env.IMAGE_NAME }}:\K[^\s]+' compose.yaml || echo "latest")
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "### 🚀 Deployment Info" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -59,7 +59,7 @@ jobs:
             git reset --hard origin/main
 
             # ─── Get image tag from compose.yaml ───
-            IMAGE_TAG=$(grep -oP 'image: .*:\K[^\s]+' compose.yaml || echo "latest")
+            IMAGE_TAG=$(grep -oP 'image: ${{ env.IMAGE_NAME }}:\K[^\s]+' compose.yaml || echo "latest")
             echo "Deploying image: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
 
             # ─── Pull the Docker image ───
