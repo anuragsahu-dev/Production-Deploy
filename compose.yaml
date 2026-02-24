@@ -1,6 +1,6 @@
 services:
   app:
-    image: as3305100/api:build-6c14011a548e4470fb9ba110f5bc456a9f6d3edd
+    image: as3305100/api:build-8b4bc7d37ca76ec409a22ccb567e9921bf39a377
     build:
       context: .
       dockerfile: Dockerfile
