@@ -1,7 +1,13 @@
-// Grafana Alloy config — replaces deprecated Promtail
-// Alloy uses "River" syntax (not YAML)
+// ============================================
+// Grafana Alloy Configuration
+// Ships: Docker Logs → Grafana Cloud Loki
+// ============================================
 
-// ─── Scrape Docker container logs ───
+// ══════════════════════════════════════════════
+// LOGS → Grafana Cloud Loki
+// ══════════════════════════════════════════════
+
+// ─── Discover Docker container log files ───
 local.file_match "docker_logs" {
   path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log"}]
 }
@@ -11,12 +17,12 @@ loki.source.file "docker" {
   forward_to = [loki.process.docker.receiver]
 }
 
-// ─── Parse Docker JSON log format ───
+// ─── Parse Docker + Winston JSON logs ───
 loki.process "docker" {
-  // Parse Docker's JSON wrapper
+  // Parse Docker's JSON wrapper (extracts log line, timestamp, stream)
   stage.docker {}
 
-  // If the log line itself is JSON (Winston), extract fields
+  // If the log line is JSON (Winston), extract useful fields
   stage.json {
     expressions = {
       level   = "level",
@@ -24,7 +30,7 @@ loki.process "docker" {
     }
   }
 
-  // Promote extracted fields to Loki labels
+  // Promote extracted fields to Loki labels (for filtering)
   stage.labels {
     values = {
       level   = "",
@@ -32,7 +38,7 @@ loki.process "docker" {
     }
   }
 
-  // Add static labels
+  // Add static labels to identify the source
   stage.static_labels {
     values = {
       job  = "docker",
@@ -43,7 +49,7 @@ loki.process "docker" {
   forward_to = [loki.write.grafana_cloud.receiver]
 }
 
-// ─── Ship to Grafana Cloud Loki ───
+// ─── Ship logs to Grafana Cloud Loki ───
 loki.write "grafana_cloud" {
   endpoint {
     url = env("LOKI_URL")

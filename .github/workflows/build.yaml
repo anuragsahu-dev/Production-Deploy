@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger only
 
 env:
-  IMAGE_NAME: YOUR_DOCKERHUB_USERNAME/api
+  IMAGE_NAME: as3305100/api
 
 jobs:
   build-and-push:
@@ -62,10 +62,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build \
-            -t ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} \
-            --platform linux/amd64 \
-            .
+          docker build -t ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} --platform linux/amd64 .
 
       - name: Tag as latest
         run: docker tag ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }} ${{ env.IMAGE_NAME }}:latest

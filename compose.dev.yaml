@@ -6,12 +6,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: api-dev
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      - .:/app # Sync source code (live reload)
-      - /app/node_modules # Keep container's node_modules intact
+      - ./:/app 
+      - /app/node_modules 
     env_file: .env
     environment:
       - NODE_ENV=development
@@ -26,9 +26,9 @@ services:
   # ─────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: redis-dev
     ports:
-      - "6379:6379" # Exposed for local debugging (Redis CLI, RedisInsight, etc.)
+      - "6379:6379" 
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
