@@ -17,26 +17,38 @@ This creates a `package.json` with default values.
 ### Production Dependencies
 
 ```bash
-npm i express dotenv
+npm i express dotenv cors helmet ioredis winston
 ```
 
-| Package   | Purpose                                      |
-| --------- | -------------------------------------------- |
-| `express` | Web framework for building APIs              |
-| `dotenv`  | Loads environment variables from `.env` file |
+| Package   | Purpose                                           |
+| --------- | ------------------------------------------------- |
+| `express` | Web framework for building APIs (v5)              |
+| `dotenv`  | Loads environment variables from `.env` file      |
+| `cors`    | Cross-origin resource sharing                     |
+| `helmet`  | Sets secure HTTP headers automatically            |
+| `ioredis` | Redis client with reconnect + retry logic         |
+| `winston` | Structured JSON logging (parsed by Grafana Alloy) |
 
 ### Dev Dependencies
 
 ```bash
-npm i -D typescript tsx @types/node @types/express
+npm i -D typescript tsx @types/node @types/express @types/cors
+npm i -D eslint @eslint/js typescript-eslint globals eslint-config-prettier
+npm i -D prettier vitest
+npm i -D husky @commitlint/cli @commitlint/config-conventional
 ```
 
-| Package          | Purpose                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------------- |
-| `typescript`     | The TypeScript compiler (`tsc`) — essential, always needed                                           |
-| `tsx`            | Fast TypeScript executor (uses esbuild under the hood) — runs `.ts` files directly without compiling |
-| `@types/node`    | Type definitions for Node.js built-in modules                                                        |
-| `@types/express` | Type definitions for Express                                                                         |
+| Package                           | Purpose                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `typescript`                      | The TypeScript compiler (`tsc`) — essential, always needed                                           |
+| `tsx`                             | Fast TypeScript executor (uses esbuild under the hood) — runs `.ts` files directly without compiling |
+| `@types/node`                     | Type definitions for Node.js built-in modules                                                        |
+| `@types/express`                  | Type definitions for Express                                                                         |
+| `@types/cors`                     | Type definitions for CORS                                                                            |
+| `vitest`                          | Fast test runner (Vite-based)                                                                        |
+| `husky`                           | Git hooks (pre-commit, pre-push, commit-msg)                                                         |
+| `@commitlint/cli`                 | Enforces conventional commit message format                                                          |
+| `@commitlint/config-conventional` | Conventional commits config preset                                                                   |
 
 ### Why `tsx` and not `ts-node` or `nodemon`?
 
@@ -212,7 +224,9 @@ Even though the source file is `app.ts`. TypeScript resolves it correctly, and a
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
-    "format:check": "prettier --check src/"
+    "format:check": "prettier --check src/",
+    "test": "vitest run",
+    "prepare": "husky"
   }
 }
 ```
@@ -226,6 +240,8 @@ Even though the source file is `app.ts`. TypeScript resolves it correctly, and a
 | `npm run lint:fix`     | `eslint src/ --fix`      | Auto-fix lint issues                                       |
 | `npm run format`       | `prettier --write src/`  | Format all files with Prettier                             |
 | `npm run format:check` | `prettier --check src/`  | Check if files are formatted (useful in CI)                |
+| `npm run test`         | `vitest run`             | Run unit tests once                                        |
+| `npm run prepare`      | `husky`                  | Sets up Git hooks (runs automatically on `npm install`)    |
 
 ---
 
@@ -440,7 +456,7 @@ npm start         # Step 2: Run compiled JS
 ### Development Dockerfile (`Dockerfile.dev`)
 
 ```dockerfile
-FROM node:22-alpine
+FROM node:22
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -453,31 +469,37 @@ CMD ["npm", "run", "dev"]
 
 ```dockerfile
 # --- Build Stage ---
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
+RUN npm prune --omit=dev
 
 # --- Production Stage ---
-FROM node:22-alpine
+FROM node:22-slim AS runner
 WORKDIR /app
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-COPY package*.json ./
-RUN npm ci --omit=dev
+RUN useradd -m appuser
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/dist ./dist
 USER appuser
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=3s \
-  CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
 CMD ["node", "--enable-source-maps", "dist/index.js"]
 ```
+
+**Why `node:22-slim` instead of `node:22-alpine`?**
+
+- `slim` is Debian-based with `glibc` — fewer compatibility issues with npm packages
+- `alpine` uses `musl` — some packages (like `bcrypt`) can fail to install
+- `slim` still small (~200MB vs alpine's ~150MB)
 
 **Why multi-stage?**
 
 - Build stage: has `typescript`, `tsx`, `eslint` (heavy, ~200MB)
-- Production stage: only has `express`, `dotenv` (lightweight, ~50MB)
+- `npm prune --omit=dev` removes devDependencies in the builder before copying
+- Production stage: only has production deps (lightweight, ~50MB)
 - Result: Much smaller Docker image
 
 **Why `CMD ["array"]` format (exec form)?**
@@ -486,7 +508,11 @@ CMD ["node", "--enable-source-maps", "dist/index.js"]
 - Graceful shutdown works properly
 - Shell form (`CMD node ...`) wraps in `/bin/sh` which may not forward signals
 
-### Docker Compose (`docker-compose.yml`)
+**Why no `HEALTHCHECK` in the Dockerfile?**
+
+- We define healthcheck in `compose.yaml` instead — more flexible (can change interval/timeout without rebuilding image)
+
+### Development Docker Compose (`compose.dev.yaml`)
 
 ```yaml
 services:
@@ -494,35 +520,63 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      - .:/app # Sync source code into container (live reload)
+      - ./:/app # Sync source code into container (live reload)
       - /app/node_modules # Keep container's node_modules intact
+    env_file: .env
     environment:
       - NODE_ENV=development
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379" # Exposed for local debugging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 ```
+
+Run locally: `docker compose -f compose.dev.yaml up --build`
 
 **The volume trick:**
 
-- `.:/app` — bind mount syncs your local files into the container
+- `./:/app` — bind mount syncs your local files into the container
 - `/app/node_modules` — anonymous volume prevents overwriting container's `node_modules`
 - When you edit a file locally → container sees the change → `tsx watch` restarts → hot-reload works!
 
 ---
 
-## 11. What's Still Needed for Production Deployment
+## 11. Production Readiness Checklist
 
-| #   | What                               | Priority | Status     |
-| --- | ---------------------------------- | -------- | ---------- |
-| 1   | Helmet (security headers)          | 🔴 Must  | ❌ Not yet |
-| 2   | CORS                               | 🔴 Must  | ❌ Not yet |
-| 3   | Pino logger (replace console.log)  | 🟡 Good  | ❌ Not yet |
-| 4   | Graceful shutdown (handle SIGTERM) | 🔴 Must  | ❌ Not yet |
-| 5   | Error handling middleware          | 🔴 Must  | ❌ Not yet |
-| 6   | `.dockerignore` file               | 🔴 Must  | ❌ Not yet |
-| 7   | `.env.example` file                | 🟡 Good  | ❌ Not yet |
-| 8   | Non-root Docker user               | 🟡 Good  | ❌ Not yet |
+| #   | What                                           | Priority | Status  |
+| --- | ---------------------------------------------- | -------- | ------- |
+| 1   | Helmet (security headers)                      | 🔴 Must  | ✅ Done |
+| 2   | CORS                                           | 🔴 Must  | ✅ Done |
+| 3   | Winston logger (structured JSON in production) | 🟡 Good  | ✅ Done |
+| 4   | Graceful shutdown (handle SIGTERM/SIGINT)      | 🔴 Must  | ✅ Done |
+| 5   | Error handling middleware                      | 🔴 Must  | ✅ Done |
+| 6   | `.dockerignore` file                           | 🔴 Must  | ✅ Done |
+| 7   | `.env.example` file                            | 🟡 Good  | ✅ Done |
+| 8   | Non-root Docker user (`appuser`)               | 🟡 Good  | ✅ Done |
+
+> All items completed. See `deployment-notes.md` for the full production deployment steps.
 
 ---
 
@@ -530,11 +584,37 @@ services:
 
 ```
 📁 05-Docker-Compose-Production-Deployment/
+├── 📁 .github/workflows/
+│   ├── ci.yaml               ← PR checks: lint + build + test
+│   ├── build.yaml            ← Build Docker image → push to Docker Hub
+│   └── deploy.yaml           ← SSH to EC2 → deploy
+├── 📁 .husky/
+│   ├── pre-commit            ← lint + format:check
+│   ├── commit-msg            ← commitlint
+│   └── pre-push              ← test + build
+├── 📁 alloy/
+│   └── config.alloy          ← Grafana Alloy log shipping config
+├── 📁 nginx/
+│   ├── nginx.conf            ← Main config: gzip, rate limiting
+│   └── conf.d/default.conf   ← Server: proxy, SSL, security headers
 ├── 📁 src/
-│   └── index.ts              ← Entry point
+│   ├── config/
+│   │   ├── env.ts            ← Centralized env vars
+│   │   ├── logger.ts         ← Winston logger config
+│   │   └── redis.ts          ← ioredis client with reconnect
+│   ├── index.ts              ← Express app + /health + graceful shutdown
+│   ├── routes/               ← API routes
+│   ├── services/             ← Business logic
+│   └── data/                 ← Data layer
 ├── 📁 dist/                  ← Compiled output (auto-generated by `tsc`)
-│   ├── index.js
-│   └── index.js.map
+├── Dockerfile                ← Multi-stage production build
+├── Dockerfile.dev            ← Development with hot reload
+├── compose.yaml              ← Production: 5 services
+├── compose.dev.yaml          ← Development: 2 services
+├── .dockerignore             ← Keep build context small
+├── .env.example              ← Template for env vars
+├── .gitignore                ← node_modules, dist, .env
+├── commitlint.config.js      ← Conventional commits config
 ├── eslint.config.js          ← ESLint flat config (ESLint 9+)
 ├── .prettierrc               ← Prettier formatting rules
 ├── .prettierignore           ← Prettier ignore list
@@ -549,25 +629,34 @@ services:
 
 ### Production (`dependencies`)
 
-| Package   | Version | Purpose               |
-| --------- | ------- | --------------------- |
-| `express` | ^5.2.1  | Web framework         |
-| `dotenv`  | ^17.3.1 | Environment variables |
+| Package   | Version | Purpose                              |
+| --------- | ------- | ------------------------------------ |
+| `express` | ^5.2.1  | Web framework                        |
+| `dotenv`  | ^17.3.1 | Environment variables                |
+| `cors`    | ^2.8.6  | Cross-origin resource sharing        |
+| `helmet`  | ^8.1.0  | Secure HTTP headers                  |
+| `ioredis` | ^5.9.3  | Redis client with reconnect strategy |
+| `winston` | ^3.19.0 | Structured JSON logging              |
 
 ### Development (`devDependencies`)
 
-| Package                  | Version | Purpose                                           |
-| ------------------------ | ------- | ------------------------------------------------- |
-| `typescript`             | ^5.9.3  | TypeScript compiler                               |
-| `tsx`                    | ^4.21.0 | Fast TS executor (dev server)                     |
-| `@types/node`            | ^25.3.0 | Node.js type definitions                          |
-| `@types/express`         | ^5.0.6  | Express type definitions                          |
-| `eslint`                 | ^10.0.1 | Code quality linter                               |
-| `@eslint/js`             | ^10.0.1 | ESLint recommended JS rules                       |
-| `typescript-eslint`      | ^8.56.0 | TypeScript ESLint parser + rules                  |
-| `globals`                | ^17.3.0 | Global variables for ESLint                       |
-| `prettier`               | ^3.8.1  | Code formatter                                    |
-| `eslint-config-prettier` | ^10.1.8 | Disables ESLint rules that conflict with Prettier |
+| Package                           | Version | Purpose                                           |
+| --------------------------------- | ------- | ------------------------------------------------- |
+| `typescript`                      | ^5.9.3  | TypeScript compiler                               |
+| `tsx`                             | ^4.21.0 | Fast TS executor (dev server)                     |
+| `@types/node`                     | ^25.3.0 | Node.js type definitions                          |
+| `@types/express`                  | ^5.0.6  | Express type definitions                          |
+| `@types/cors`                     | ^2.8.19 | CORS type definitions                             |
+| `eslint`                          | ^10.0.1 | Code quality linter                               |
+| `@eslint/js`                      | ^10.0.1 | ESLint recommended JS rules                       |
+| `typescript-eslint`               | ^8.56.0 | TypeScript ESLint parser + rules                  |
+| `globals`                         | ^17.3.0 | Global variables for ESLint                       |
+| `prettier`                        | ^3.8.1  | Code formatter                                    |
+| `eslint-config-prettier`          | ^10.1.8 | Disables ESLint rules that conflict with Prettier |
+| `vitest`                          | ^4.0.18 | Fast test runner (Vite-based)                     |
+| `husky`                           | ^9.1.7  | Git hooks (pre-commit, pre-push, commit-msg)      |
+| `@commitlint/cli`                 | ^20.4.2 | Conventional commit message linter                |
+| `@commitlint/config-conventional` | ^20.4.2 | Conventional commits config preset                |
 
 ---
 
@@ -580,8 +669,13 @@ npm run lint         # Check for code issues
 npm run lint:fix     # Auto-fix code issues
 npm run format       # Format code with Prettier
 npm run format:check # Check formatting (CI)
+npm run test         # Run unit tests
 
 # Production
 npm run build        # Compile TypeScript → JavaScript
 npm start            # Run production build
+
+# Docker (Development)
+docker compose -f compose.dev.yaml up --build    # Start dev environment
+docker compose -f compose.dev.yaml down          # Stop dev environment
 ```
